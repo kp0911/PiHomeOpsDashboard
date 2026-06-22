@@ -1,0 +1,32 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:postgres}:5432/${POSTGRES_DB:homeops}
+    username: ${POSTGRES_USER:homeops}
+    password: ${POSTGRES_PASSWORD:change-me}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+  data:
+    redis:
+      host: ${REDIS_HOST:redis}
+      port: ${REDIS_PORT:6379}
+  servlet:
+    multipart:
+      max-file-size: 10GB
+      max-request-size: 10GB
+
+homeops:
+  nas-root: ${NAS_ROOT:/mnt/nas}
+  jwt-secret: ${JWT_SECRET:dev-secret-change-me-dev-secret-change-me}
+  admin-username: ${ADMIN_USERNAME:admin}
+  admin-password: ${ADMIN_PASSWORD:change-this-before-real-use}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus

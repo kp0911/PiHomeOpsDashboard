@@ -1,0 +1,11 @@
+.gradle/
+build/
+out/
+target/
+node_modules/
+dist/
+.env
+*.log
+.idea/
+storage-sim/*
+!storage-sim/.gitkeep
