@@ -8,11 +8,21 @@ Phase 1 creates the secure NAS file-manager foundation:
 - Docker Compose local stack with a simulated NAS bind mount.
 - Raspberry Pi setup documentation.
 
-Out of scope for this phase:
+Out of scope for the original local-only phase:
 
 - PC agent monitoring.
 - Finished Grafana dashboards.
 - TOTP 2FA.
-- Direct Raspberry Pi configuration from this environment.
+- Finished production hardening of the Raspberry Pi deployment.
 
-The Raspberry Pi setup cannot be executed until the hardware is available and its network access is recovered.
+## Raspberry Pi Follow-up Status
+
+Raspberry Pi access has since been recovered from the home environment.
+
+- Tailscale IP: `100.104.223.84`
+- SSH key login is working.
+- `/mnt/nas` is mounted from the currently attached 1.8T exFAT external drive.
+- Samba is reachable from Windows at `\\100.104.223.84\nas`.
+- The dashboard is reachable through Tailscale at `http://100.104.223.84:8088`.
+
+The originally planned 10TB disk is not the currently attached disk. Treat the current 1.8T exFAT drive as the active validation drive until the final storage device is confirmed.

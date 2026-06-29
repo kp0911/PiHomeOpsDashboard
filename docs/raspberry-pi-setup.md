@@ -1,8 +1,18 @@
 # Raspberry Pi Setup
 
-## Current Constraint
+## Current Deployment Snapshot
 
-The Raspberry Pi is not available in this environment. Its current IP address and password are unknown, so do not attempt Pi-side setup here. Complete the local Docker workflow first, then handle the steps below when physically at home.
+The Raspberry Pi is now reachable through Tailscale.
+
+- Tailscale device name: `raspberrypi`
+- Tailscale IPv4: `100.104.223.84`
+- SSH key login from the Windows PC is working.
+- NAS mount point: `/mnt/nas`
+- Current external drive: `/dev/sda1`, about `1.8T`, label `One Touch`, filesystem `exfat`, UUID `008D-10AA`
+- Samba share is reachable from Windows at `\\100.104.223.84\nas`.
+- Dashboard is reachable through Tailscale at `http://100.104.223.84:8088`.
+
+The originally planned 10TB disk is not the disk currently attached. Confirm the final storage device before formatting or migrating data.
 
 ## Access Recovery Checklist
 
@@ -37,9 +47,29 @@ sudo reboot
 
 From the client PC:
 
-```bash
+```powershell
 ssh-keygen -t ed25519 -C "homeops-admin"
-ssh-copy-id pi@raspberrypi.local
+```
+
+On Windows, print the public key:
+
+```powershell
+type $env:USERPROFILE\.ssh\id_ed25519.pub
+```
+
+On the Pi, add the public key to:
+
+```bash
+mkdir -p ~/.ssh
+nano ~/.ssh/authorized_keys
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/authorized_keys
+```
+
+Test key login:
+
+```powershell
+ssh pi@100.104.223.84
 ```
 
 After confirming key login works, disable password SSH login:
@@ -71,7 +101,13 @@ tailscale ip -4
 
 Use the Tailscale IP for SSH and dashboard access. Avoid internet port forwarding at the beginning.
 
-## 10TB HDD Mount
+Current verified Tailscale IP:
+
+```text
+100.104.223.84
+```
+
+## NAS Drive Mount
 
 Identify the disk:
 
@@ -80,7 +116,9 @@ lsblk
 sudo blkid
 ```
 
-Format only after confirming the correct device:
+Format only after confirming the correct device. Do not format an existing data drive unless you intend to erase it.
+
+For a future Linux-native NAS disk, ext4 is preferred:
 
 ```bash
 sudo mkfs.ext4 /dev/sdX1
@@ -89,16 +127,29 @@ sudo mount /dev/sdX1 /mnt/nas
 sudo chown -R 1000:1000 /mnt/nas
 ```
 
+For an ext4 disk, add `/etc/fstab` by UUID:
+
+```text
+UUID=replace-with-real-uuid /mnt/nas ext4 defaults,nofail 0 2
+```
+
+Current verified drive is exFAT, so the active `/etc/fstab` style is:
+
+```text
+UUID=008D-10AA /mnt/nas exfat defaults,nofail,uid=1000,gid=1000,umask=002 0 0
+```
+
+After editing `/etc/fstab`, reload systemd and mount:
+
+```bash
+sudo systemctl daemon-reload
+sudo mount -a
+```
+
 Create the expected directories:
 
 ```bash
 sudo mkdir -p /mnt/nas/uploads /mnt/nas/shared/public /mnt/nas/shared/private /mnt/nas/backups /mnt/nas/trash /mnt/nas/system/upload-temp
-```
-
-Add `/etc/fstab` by UUID:
-
-```text
-UUID=replace-with-real-uuid /mnt/nas ext4 defaults,nofail 0 2
 ```
 
 Verify:
@@ -106,12 +157,13 @@ Verify:
 ```bash
 sudo mount -a
 df -h /mnt/nas
+findmnt /mnt/nas
 ```
 
 ## Samba
 
 ```bash
-sudo apt install -y samba
+sudo apt install -y samba samba-common-bin
 sudo smbpasswd -a pi
 ```
 
@@ -131,6 +183,13 @@ Restart:
 
 ```bash
 sudo systemctl restart smbd
+sudo systemctl enable smbd
+```
+
+Windows access path:
+
+```text
+\\100.104.223.84\nas
 ```
 
 ## Firewall
@@ -163,8 +222,27 @@ docker compose up -d --build
 
 Use a real `.env` file with strong values before running on the Pi.
 
+Generate a strong JWT secret:
+
+```bash
+openssl rand -hex 32
+```
+
+Verify:
+
+```bash
+docker compose ps
+curl http://localhost:8088/api/health
+```
+
+Open from a Tailscale-connected browser:
+
+```text
+http://100.104.223.84:8088
+```
+
 ## Backup Recommendations
 
 - Back up PostgreSQL dumps into `/mnt/nas/backups/db`.
 - Back up application config and `.env` into `/mnt/nas/backups/app-config`.
-- Keep a second copy of important files outside the 10TB drive.
+- Keep a second copy of important files outside the NAS drive.
