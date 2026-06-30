@@ -30,6 +30,18 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+export async function apiBlob(path: string): Promise<Blob> {
+  const headers = new Headers();
+  const currentToken = token();
+  if (currentToken) headers.set("Authorization", `Bearer ${currentToken}`);
+  const response = await fetch(`${API_BASE}${path}`, { headers });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || response.statusText);
+  }
+  return response.blob();
+}
+
 export async function login(username: string, password: string) {
   const response = await api<LoginResponse>("/auth/login", {
     method: "POST",
