@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Download, Eye, FileText, Folder, FolderPlus, HardDrive, Home, LogOut, Pencil, Search, Shield, Trash2, Upload, X } from "lucide-react";
 import { api, apiBlob, login, setToken, token } from "./lib/api";
@@ -36,6 +36,16 @@ type StorageStats = {
   availableBytes: number;
   usedPercent: number;
 };
+
+function folderTargetFromPoint(x: number, y: number) {
+  if (!x && !y) return null;
+  const element = document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-folder-path][data-folder-id]");
+  if (!element) return null;
+  return {
+    id: element.dataset.folderId ?? "",
+    path: element.dataset.folderPath ?? ""
+  };
+}
 
 function App() {
   const [authed, setAuthed] = useState(Boolean(token()));
@@ -129,6 +139,12 @@ function FileManager() {
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [draggedFileId, setDraggedFileId] = useState<string | null>(null);
+  const [hoveredFolder, setHoveredFolder] = useState<{ id: string; path: string } | null>(null);
+  const [pointerDraggingFileId, setPointerDraggingFileId] = useState<string | null>(null);
+  const dropHandledRef = useRef(false);
+  const pointerDragRef = useRef<{ fileId: string; startX: number; startY: number; active: boolean } | null>(null);
+  const suppressOpenRef = useRef(false);
+  const moveFileRef = useRef(moveFile);
 
   async function refresh() {
     try {
@@ -260,6 +276,43 @@ function FileManager() {
     }
   }
 
+  moveFileRef.current = moveFile;
+
+  function startInternalDrag(fileId: string) {
+    dropHandledRef.current = false;
+    setDraggedFileId(fileId);
+  }
+
+  function moveFileFromDrop(fileId: string, targetParentPath: string) {
+    dropHandledRef.current = true;
+    void moveFile(fileId, targetParentPath);
+  }
+
+  function finishInternalDrag(fileId: string, releaseTarget?: { id: string; path: string } | null) {
+    const target = releaseTarget ?? hoveredFolder;
+    setDraggedFileId(null);
+    setHoveredFolder(null);
+    if (!dropHandledRef.current && target && target.id !== fileId) {
+      void moveFile(fileId, target.path);
+    }
+  }
+
+  function beginPointerDrag(fileId: string, event: React.PointerEvent) {
+    if (event.button !== 0) return;
+    if (event.target instanceof HTMLElement && event.target.closest(".tile-actions")) return;
+    pointerDragRef.current = {
+      fileId,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false
+    };
+  }
+
+  function openFromTile(file: StoredFile) {
+    if (suppressOpenRef.current) return;
+    openItem(file);
+  }
+
   function closePreview() {
     setPreview((current) => {
       if (current) URL.revokeObjectURL(current.url);
@@ -276,6 +329,51 @@ function FileManager() {
     const timer = window.setTimeout(() => refresh(), 250);
     return () => window.clearTimeout(timer);
   }, [query]);
+
+  useEffect(() => {
+    function onPointerMove(event: PointerEvent) {
+      const drag = pointerDragRef.current;
+      if (!drag) return;
+      const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+      if (!drag.active && distance < 6) return;
+      if (!drag.active) {
+        drag.active = true;
+        dropHandledRef.current = false;
+        setDraggedFileId(drag.fileId);
+        setPointerDraggingFileId(drag.fileId);
+      }
+      const target = folderTargetFromPoint(event.clientX, event.clientY);
+      setHoveredFolder(target && target.id !== drag.fileId ? target : null);
+    }
+
+    function onPointerUp(event: PointerEvent) {
+      const drag = pointerDragRef.current;
+      pointerDragRef.current = null;
+      if (!drag) return;
+      const target = folderTargetFromPoint(event.clientX, event.clientY);
+      setDraggedFileId(null);
+      setPointerDraggingFileId(null);
+      setHoveredFolder(null);
+      if (drag.active) {
+        suppressOpenRef.current = true;
+        window.setTimeout(() => {
+          suppressOpenRef.current = false;
+        }, 0);
+      }
+      if (drag.active && target && target.id !== drag.fileId) {
+        void moveFileRef.current(drag.fileId, target.path);
+      }
+    }
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+    };
+  }, []);
 
   const folders = files.filter((file) => file.directory);
   const documents = files.filter((file) => !file.directory);
@@ -302,14 +400,15 @@ function FileManager() {
       {error && <p className="error">{error}</p>}
       <div className="drop-zone" onDragOver={(event) => event.preventDefault()} onDrop={(event) => {
         event.preventDefault();
+        if (draggedFileId || event.dataTransfer.getData("application/x-homeops-file-id")) return;
         const first = event.dataTransfer.files[0];
         if (first) uploadFile(first);
       }}>
         {busy ? "Uploading..." : `Drop files into ${currentPath}`}
       </div>
       {files.length === 0 && <div className="empty-drive">{searching ? "No matching files." : "This folder is empty."}</div>}
-      {folders.length > 0 && <FileSection title={searching ? "Matching folders" : "Folders"} files={folders} draggedFileId={draggedFileId} onDragStart={setDraggedFileId} onDragEnd={() => setDraggedFileId(null)} onOpen={openItem} onPreview={previewFile} onDownload={downloadFile} onRename={renameFile} onDelete={deleteFile} onDropIntoFolder={uploadFile} onMoveIntoFolder={moveFile} />}
-      {documents.length > 0 && <FileSection title={searching ? "Matching files" : "Files"} files={documents} draggedFileId={draggedFileId} onDragStart={setDraggedFileId} onDragEnd={() => setDraggedFileId(null)} onOpen={openItem} onPreview={previewFile} onDownload={downloadFile} onRename={renameFile} onDelete={deleteFile} onDropIntoFolder={uploadFile} onMoveIntoFolder={moveFile} />}
+      {folders.length > 0 && <FileSection title={searching ? "Matching folders" : "Folders"} files={folders} draggedFileId={draggedFileId} hoveredFolderId={hoveredFolder?.id ?? null} pointerDraggingFileId={pointerDraggingFileId} onPointerDragStart={beginPointerDrag} onDragStart={startInternalDrag} onDragEnd={finishInternalDrag} onHoverFolder={setHoveredFolder} onOpen={openFromTile} onPreview={previewFile} onDownload={downloadFile} onRename={renameFile} onDelete={deleteFile} onDropIntoFolder={uploadFile} onMoveIntoFolder={moveFileFromDrop} />}
+      {documents.length > 0 && <FileSection title={searching ? "Matching files" : "Files"} files={documents} draggedFileId={draggedFileId} hoveredFolderId={hoveredFolder?.id ?? null} pointerDraggingFileId={pointerDraggingFileId} onPointerDragStart={beginPointerDrag} onDragStart={startInternalDrag} onDragEnd={finishInternalDrag} onHoverFolder={setHoveredFolder} onOpen={openFromTile} onPreview={previewFile} onDownload={downloadFile} onRename={renameFile} onDelete={deleteFile} onDropIntoFolder={uploadFile} onMoveIntoFolder={moveFileFromDrop} />}
       {preview && <PreviewDialog preview={preview} onClose={closePreview} />}
     </section>
   );
@@ -335,12 +434,16 @@ function Breadcrumb({ path, onChange }: { path: string; onChange: (path: string)
   );
 }
 
-function FileSection({ title, files, draggedFileId, onDragStart, onDragEnd, onOpen, onPreview, onDownload, onRename, onDelete, onDropIntoFolder, onMoveIntoFolder }: {
+function FileSection({ title, files, draggedFileId, hoveredFolderId, pointerDraggingFileId, onPointerDragStart, onDragStart, onDragEnd, onHoverFolder, onOpen, onPreview, onDownload, onRename, onDelete, onDropIntoFolder, onMoveIntoFolder }: {
   title: string;
   files: StoredFile[];
   draggedFileId: string | null;
+  hoveredFolderId: string | null;
+  pointerDraggingFileId: string | null;
+  onPointerDragStart: (fileId: string, event: React.PointerEvent) => void;
   onDragStart: (fileId: string) => void;
-  onDragEnd: () => void;
+  onDragEnd: (fileId: string, releaseTarget?: { id: string; path: string } | null) => void;
+  onHoverFolder: (folder: { id: string; path: string } | null) => void;
   onOpen: (file: StoredFile) => void;
   onPreview: (file: StoredFile) => void;
   onDownload: (file: StoredFile) => void;
@@ -351,12 +454,45 @@ function FileSection({ title, files, draggedFileId, onDragStart, onDragEnd, onOp
 }) {
   const [dragTargetId, setDragTargetId] = useState<string | null>(null);
 
+  function folderFromEventTarget(target: EventTarget | null) {
+    if (!(target instanceof HTMLElement)) return null;
+    const element = target.closest<HTMLElement>("[data-folder-path][data-folder-id]");
+    if (!element) return null;
+    return {
+      id: element.dataset.folderId ?? "",
+      path: element.dataset.folderPath ?? ""
+    };
+  }
+
+  function handleSectionDrag(event: React.DragEvent) {
+    const target = folderFromEventTarget(event.target);
+    if (!target || !draggedFileId || target.id === draggedFileId) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDragTargetId(target.id);
+    onHoverFolder(target);
+  }
+
+  function handleSectionDrop(event: React.DragEvent) {
+    const target = folderFromEventTarget(event.target);
+    const internalFileId = draggedFileId || event.dataTransfer.getData("application/x-homeops-file-id");
+    if (!target || !internalFileId || target.id === internalFileId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setDragTargetId(null);
+    onHoverFolder(null);
+    onMoveIntoFolder(internalFileId, target.path);
+  }
+
   function handleFolderDrag(event: React.DragEvent, file: StoredFile) {
     if (!file.directory) return;
     event.preventDefault();
     event.stopPropagation();
-    event.dataTransfer.dropEffect = "copy";
+    event.dataTransfer.dropEffect = draggedFileId ? "move" : "copy";
     setDragTargetId(file.id);
+    if (draggedFileId && draggedFileId !== file.id) {
+      onHoverFolder({ id: file.id, path: file.relativePath });
+    }
   }
 
   function handleFolderDrop(event: React.DragEvent, file: StoredFile) {
@@ -364,6 +500,7 @@ function FileSection({ title, files, draggedFileId, onDragStart, onDragEnd, onOp
     event.preventDefault();
     event.stopPropagation();
     setDragTargetId(null);
+    onHoverFolder(null);
     const internalFileId = draggedFileId || event.dataTransfer.getData("application/x-homeops-file-id");
     if (internalFileId) {
       if (internalFileId !== file.id) onMoveIntoFolder(internalFileId, file.relativePath);
@@ -374,7 +511,7 @@ function FileSection({ title, files, draggedFileId, onDragStart, onDragEnd, onOp
   }
 
   return (
-    <div className="file-section">
+    <div className="file-section" onDragOver={handleSectionDrag} onDrop={handleSectionDrop}>
       <h3>{title}</h3>
       <div className="file-grid">
         {files.map((file) => (
@@ -382,10 +519,15 @@ function FileSection({ title, files, draggedFileId, onDragStart, onDragEnd, onOp
             className={[
               "file-tile",
               file.directory ? "folder-drop-target" : "",
-              dragTargetId === file.id ? "drag-over" : ""
+              (dragTargetId === file.id || hoveredFolderId === file.id) ? "drag-over" : "",
+              pointerDraggingFileId === file.id ? "is-dragging" : ""
             ].filter(Boolean).join(" ")}
             key={file.id}
-            draggable
+            draggable={false}
+            data-file-id={file.id}
+            data-folder-id={file.directory ? file.id : undefined}
+            data-folder-path={file.directory ? file.relativePath : undefined}
+            onPointerDown={(event) => onPointerDragStart(file.id, event)}
             onDoubleClick={() => onOpen(file)}
             onDragStart={(event) => {
               onDragStart(file.id);
@@ -393,18 +535,29 @@ function FileSection({ title, files, draggedFileId, onDragStart, onDragEnd, onOp
               event.dataTransfer.setData("application/x-homeops-file-id", file.id);
               event.dataTransfer.setData("text/plain", file.originalName);
             }}
-            onDragEnd={() => {
+            onDragEnd={(event) => {
               setDragTargetId(null);
-              onDragEnd();
+              const releaseTarget = folderTargetFromPoint(event.clientX, event.clientY);
+              onDragEnd(file.id, releaseTarget);
             }}
             onDragEnter={(event) => handleFolderDrag(event, file)}
             onDragOver={(event) => handleFolderDrag(event, file)}
-            onDragLeave={() => setDragTargetId((current) => current === file.id ? null : current)}
+            onDragLeave={() => {
+              setDragTargetId((current) => current === file.id ? null : current);
+            }}
             onDrop={(event) => handleFolderDrop(event, file)}
           >
-            <button
+            <div
               className="file-tile-main"
+              role="button"
+              tabIndex={0}
               onClick={() => onOpen(file)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onOpen(file);
+                }
+              }}
               onDragEnter={(event) => handleFolderDrag(event, file)}
               onDragOver={(event) => handleFolderDrag(event, file)}
               onDrop={(event) => handleFolderDrop(event, file)}
@@ -414,7 +567,7 @@ function FileSection({ title, files, draggedFileId, onDragStart, onDragEnd, onOp
               </span>
               <span className="file-tile-name">{file.originalName}</span>
               <span className="file-tile-meta">{file.directory ? "Folder" : formatBytes(file.sizeBytes)}</span>
-            </button>
+            </div>
             <div className="tile-actions">
               <button title="Preview" onClick={() => onPreview(file)} disabled={file.directory}><Eye size={15} /></button>
               <button title="Download" onClick={() => onDownload(file)} disabled={file.directory}><Download size={15} /></button>
