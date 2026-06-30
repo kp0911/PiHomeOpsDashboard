@@ -87,6 +87,13 @@ public class StoredFile {
         updatedAt = now;
     }
 
+    public void move(String newParentPath, String newAbsolutePath, String newRelativePath, Instant now) {
+        parentPath = newParentPath;
+        absolutePath = newAbsolutePath;
+        relativePath = newRelativePath;
+        updatedAt = now;
+    }
+
     public void markDeleted(String trashAbsolutePath, String trashRelativePath, Instant now) {
         absolutePath = trashAbsolutePath;
         relativePath = trashRelativePath;

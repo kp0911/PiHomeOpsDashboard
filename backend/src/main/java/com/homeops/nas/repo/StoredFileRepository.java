@@ -8,4 +8,5 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface StoredFileRepository extends JpaRepository<StoredFile, UUID> {
     List<StoredFile> findByParentPathAndDeletedFalseOrderByDirectoryDescOriginalNameAsc(String parentPath);
     List<StoredFile> findTop100ByDeletedFalseAndOriginalNameContainingIgnoreCaseOrderByDirectoryDescOriginalNameAsc(String query);
+    List<StoredFile> findByDeletedFalseAndRelativePathStartingWith(String relativePathPrefix);
 }

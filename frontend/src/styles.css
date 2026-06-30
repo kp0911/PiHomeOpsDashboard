@@ -133,6 +133,11 @@ main {
   color: #52615d;
 }
 
+.status-grid meter {
+  width: 100%;
+  height: 10px;
+}
+
 .workspace {
   padding: 18px;
 }
@@ -316,6 +321,28 @@ th {
   border-radius: 8px;
   background: #ffffff;
   overflow: hidden;
+  cursor: grab;
+}
+
+.file-tile:active {
+  cursor: grabbing;
+}
+
+.folder-drop-target {
+  outline: 1px solid transparent;
+}
+
+.folder-drop-target:hover {
+  outline-color: #d3b15f;
+}
+
+.folder-drop-target.drag-over {
+  outline: 2px solid #b48725;
+  background: #fff8e8;
+}
+
+.folder-drop-target.drag-over .file-tile-main {
+  background: #fff8e8;
 }
 
 .file-tile-main {

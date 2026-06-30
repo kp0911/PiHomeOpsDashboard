@@ -136,6 +136,55 @@ public class FileManagerService {
     }
 
     @Transactional
+    public StoredFile move(UUID userId, UUID fileId, String targetParentPath) throws IOException {
+        StoredFile stored = storedFileRepository.findById(fileId).orElseThrow();
+        if (stored.isDeleted()) {
+            throw new IllegalArgumentException("Deleted files cannot be moved.");
+        }
+
+        String targetParentApiPath = normalizeApiPath(targetParentPath);
+        ensureUploadsScope(targetParentApiPath);
+        if (stored.isDirectory() && (targetParentApiPath.equals(stored.getRelativePath()) || targetParentApiPath.startsWith(stored.getRelativePath() + "/"))) {
+            throw new IllegalArgumentException("A folder cannot be moved into itself.");
+        }
+        if (targetParentApiPath.equals(stored.getParentPath())) {
+            return stored;
+        }
+
+        Path current = nasPathService.resolveExistingRequiredInsideRoot(stored.getRelativePath());
+        Path targetParent = nasPathService.resolveRequiredInsideRoot(targetParentApiPath);
+        Files.createDirectories(targetParent);
+        Path target = targetParent.resolve(current.getFileName()).normalize();
+        if (!target.startsWith(nasPathService.nasRoot())) {
+            throw new IllegalArgumentException("Move target is outside NAS root.");
+        }
+        if (Files.exists(target)) {
+            throw new IllegalArgumentException("A file or folder with the same stored name already exists in the target folder.");
+        }
+
+        String oldRelativePath = stored.getRelativePath();
+        String oldAbsolutePath = stored.getAbsolutePath();
+        Files.move(current, target, StandardCopyOption.ATOMIC_MOVE);
+
+        Instant now = Instant.now();
+        String newRelativePath = nasPathService.toRelative(target);
+        stored.move(targetParentApiPath, target.toString(), newRelativePath, now);
+
+        if (stored.isDirectory()) {
+            List<StoredFile> children = storedFileRepository.findByDeletedFalseAndRelativePathStartingWith(oldRelativePath + "/");
+            for (StoredFile child : children) {
+                String childRelativePath = newRelativePath + child.getRelativePath().substring(oldRelativePath.length());
+                String childAbsolutePath = target.toString() + child.getAbsolutePath().substring(oldAbsolutePath.length());
+                String childParentPath = parentPathOf(childRelativePath);
+                child.move(childParentPath, childAbsolutePath, childRelativePath, now);
+            }
+        }
+
+        auditService.record(userId, AuditEventType.FILE_RENAME, null, null, stored.getRelativePath(), "Moved file");
+        return stored;
+    }
+
+    @Transactional
     public StoredFile moveToTrash(UUID userId, UUID fileId) throws IOException {
         StoredFile stored = storedFileRepository.findById(fileId).orElseThrow();
         Path current = nasPathService.resolveExistingRequiredInsideRoot(stored.getRelativePath());
@@ -202,6 +251,14 @@ public class FileManagerService {
     private static boolean hasExtension(String name) {
         int dot = name.lastIndexOf('.');
         return dot > 0 && dot < name.length() - 1;
+    }
+
+    private static String parentPathOf(String relativePath) {
+        int slash = relativePath.lastIndexOf('/');
+        if (slash <= 0) {
+            return "/";
+        }
+        return relativePath.substring(0, slash);
     }
 
     private static String extensionFromMimeType(String mimeType) {

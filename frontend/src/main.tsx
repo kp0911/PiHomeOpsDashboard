@@ -29,6 +29,14 @@ type AuditLog = {
   createdAt: string;
 };
 
+type StorageStats = {
+  path: string;
+  totalBytes: number;
+  usedBytes: number;
+  availableBytes: number;
+  usedPercent: number;
+};
+
 function App() {
   const [authed, setAuthed] = useState(Boolean(token()));
 
@@ -73,6 +81,11 @@ function LoginPage({ onLogin }: { onLogin: () => void }) {
 
 function Shell({ onLogout }: { onLogout: () => void }) {
   const [tab, setTab] = useState<"files" | "audit">("files");
+  const [storage, setStorage] = useState<StorageStats | null>(null);
+
+  useEffect(() => {
+    api<StorageStats>("/system/storage").then(setStorage).catch(() => setStorage(null));
+  }, []);
 
   return (
     <div className="app-shell">
@@ -89,7 +102,17 @@ function Shell({ onLogout }: { onLogout: () => void }) {
         <section className="status-grid">
           <div><strong>NAS root</strong><span>/mnt/nas</span></div>
           <div><strong>Access model</strong><span>Tailscale-first</span></div>
-          <div><strong>Pi setup</strong><span>Pending hardware access</span></div>
+          <div>
+            <strong>NAS storage</strong>
+            {storage ? (
+              <>
+                <span>{formatBytes(storage.availableBytes)} free of {formatBytes(storage.totalBytes)}</span>
+                <meter min={0} max={100} value={storage.usedPercent} />
+              </>
+            ) : (
+              <span>Unavailable</span>
+            )}
+          </div>
         </section>
         {tab === "files" ? <FileManager /> : <AuditPage />}
       </main>
@@ -105,6 +128,7 @@ function FileManager() {
   const [currentPath, setCurrentPath] = useState("/uploads");
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
+  const [draggedFileId, setDraggedFileId] = useState<string | null>(null);
 
   async function refresh() {
     try {
@@ -121,14 +145,19 @@ function FileManager() {
     }
   }
 
-  async function uploadFile(file: File) {
+  async function uploadFile(file: File, targetPath = currentPath) {
     setBusy(true);
     setError("");
     const data = new FormData();
     data.set("file", file);
     try {
-      await api<StoredFile>(`/files/upload?path=${encodeURIComponent(currentPath)}`, { method: "POST", body: data });
-      await refresh();
+      await api<StoredFile>(`/files/upload?path=${encodeURIComponent(targetPath)}`, { method: "POST", body: data });
+      if (targetPath !== currentPath || query.trim()) {
+        setQuery("");
+        setCurrentPath(targetPath);
+      } else {
+        await refresh();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
     } finally {
@@ -214,6 +243,23 @@ function FileManager() {
     }
   }
 
+  async function moveFile(fileId: string, targetParentPath: string) {
+    try {
+      await api<StoredFile>(`/files/move/${fileId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ targetParentPath })
+      });
+      if (query.trim()) {
+        setQuery("");
+        setCurrentPath(targetParentPath);
+      } else {
+        await refresh();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Move failed");
+    }
+  }
+
   function closePreview() {
     setPreview((current) => {
       if (current) URL.revokeObjectURL(current.url);
@@ -249,7 +295,7 @@ function FileManager() {
           <button title="New folder" onClick={createFolder}><FolderPlus size={18} /></button>
           <label className="icon-button" title="Upload">
             <Upload size={18} />
-            <input type="file" onChange={(event) => event.target.files?.[0] && uploadFile(event.target.files[0])} />
+          <input type="file" onChange={(event) => event.target.files?.[0] && uploadFile(event.target.files[0])} />
           </label>
         </div>
       </div>
@@ -262,8 +308,8 @@ function FileManager() {
         {busy ? "Uploading..." : `Drop files into ${currentPath}`}
       </div>
       {files.length === 0 && <div className="empty-drive">{searching ? "No matching files." : "This folder is empty."}</div>}
-      {folders.length > 0 && <FileSection title={searching ? "Matching folders" : "Folders"} files={folders} onOpen={openItem} onPreview={previewFile} onDownload={downloadFile} onRename={renameFile} onDelete={deleteFile} />}
-      {documents.length > 0 && <FileSection title={searching ? "Matching files" : "Files"} files={documents} onOpen={openItem} onPreview={previewFile} onDownload={downloadFile} onRename={renameFile} onDelete={deleteFile} />}
+      {folders.length > 0 && <FileSection title={searching ? "Matching folders" : "Folders"} files={folders} draggedFileId={draggedFileId} onDragStart={setDraggedFileId} onDragEnd={() => setDraggedFileId(null)} onOpen={openItem} onPreview={previewFile} onDownload={downloadFile} onRename={renameFile} onDelete={deleteFile} onDropIntoFolder={uploadFile} onMoveIntoFolder={moveFile} />}
+      {documents.length > 0 && <FileSection title={searching ? "Matching files" : "Files"} files={documents} draggedFileId={draggedFileId} onDragStart={setDraggedFileId} onDragEnd={() => setDraggedFileId(null)} onOpen={openItem} onPreview={previewFile} onDownload={downloadFile} onRename={renameFile} onDelete={deleteFile} onDropIntoFolder={uploadFile} onMoveIntoFolder={moveFile} />}
       {preview && <PreviewDialog preview={preview} onClose={closePreview} />}
     </section>
   );
@@ -289,22 +335,80 @@ function Breadcrumb({ path, onChange }: { path: string; onChange: (path: string)
   );
 }
 
-function FileSection({ title, files, onOpen, onPreview, onDownload, onRename, onDelete }: {
+function FileSection({ title, files, draggedFileId, onDragStart, onDragEnd, onOpen, onPreview, onDownload, onRename, onDelete, onDropIntoFolder, onMoveIntoFolder }: {
   title: string;
   files: StoredFile[];
+  draggedFileId: string | null;
+  onDragStart: (fileId: string) => void;
+  onDragEnd: () => void;
   onOpen: (file: StoredFile) => void;
   onPreview: (file: StoredFile) => void;
   onDownload: (file: StoredFile) => void;
   onRename: (file: StoredFile) => void;
   onDelete: (file: StoredFile) => void;
+  onDropIntoFolder: (file: File, targetPath: string) => void;
+  onMoveIntoFolder: (fileId: string, targetPath: string) => void;
 }) {
+  const [dragTargetId, setDragTargetId] = useState<string | null>(null);
+
+  function handleFolderDrag(event: React.DragEvent, file: StoredFile) {
+    if (!file.directory) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "copy";
+    setDragTargetId(file.id);
+  }
+
+  function handleFolderDrop(event: React.DragEvent, file: StoredFile) {
+    if (!file.directory) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setDragTargetId(null);
+    const internalFileId = draggedFileId || event.dataTransfer.getData("application/x-homeops-file-id");
+    if (internalFileId) {
+      if (internalFileId !== file.id) onMoveIntoFolder(internalFileId, file.relativePath);
+      return;
+    }
+    const first = event.dataTransfer.files[0];
+    if (first) onDropIntoFolder(first, file.relativePath);
+  }
+
   return (
     <div className="file-section">
       <h3>{title}</h3>
       <div className="file-grid">
         {files.map((file) => (
-          <article className="file-tile" key={file.id} onDoubleClick={() => onOpen(file)}>
-            <button className="file-tile-main" onClick={() => onOpen(file)}>
+          <article
+            className={[
+              "file-tile",
+              file.directory ? "folder-drop-target" : "",
+              dragTargetId === file.id ? "drag-over" : ""
+            ].filter(Boolean).join(" ")}
+            key={file.id}
+            draggable
+            onDoubleClick={() => onOpen(file)}
+            onDragStart={(event) => {
+              onDragStart(file.id);
+              event.dataTransfer.effectAllowed = "move";
+              event.dataTransfer.setData("application/x-homeops-file-id", file.id);
+              event.dataTransfer.setData("text/plain", file.originalName);
+            }}
+            onDragEnd={() => {
+              setDragTargetId(null);
+              onDragEnd();
+            }}
+            onDragEnter={(event) => handleFolderDrag(event, file)}
+            onDragOver={(event) => handleFolderDrag(event, file)}
+            onDragLeave={() => setDragTargetId((current) => current === file.id ? null : current)}
+            onDrop={(event) => handleFolderDrop(event, file)}
+          >
+            <button
+              className="file-tile-main"
+              onClick={() => onOpen(file)}
+              onDragEnter={(event) => handleFolderDrag(event, file)}
+              onDragOver={(event) => handleFolderDrag(event, file)}
+              onDrop={(event) => handleFolderDrop(event, file)}
+            >
               <span className={file.directory ? "file-icon folder-icon" : "file-icon document-icon"}>
                 {file.directory ? <Folder size={34} /> : <FileText size={34} />}
               </span>

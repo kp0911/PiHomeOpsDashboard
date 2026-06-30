@@ -56,6 +56,11 @@ public class FileController {
         return fileManagerService.rename(userId(authentication), fileId, body.name());
     }
 
+    @PatchMapping("/move/{fileId}")
+    public StoredFile move(@PathVariable UUID fileId, @Valid @RequestBody MoveRequest body, Authentication authentication) throws Exception {
+        return fileManagerService.move(userId(authentication), fileId, body.targetParentPath());
+    }
+
     @DeleteMapping("/{fileId}")
     public StoredFile delete(@PathVariable UUID fileId, Authentication authentication) throws Exception {
         return fileManagerService.moveToTrash(userId(authentication), fileId);
@@ -77,5 +82,8 @@ public class FileController {
     }
 
     public record RenameRequest(@NotBlank String name) {
+    }
+
+    public record MoveRequest(@NotBlank String targetParentPath) {
     }
 }
