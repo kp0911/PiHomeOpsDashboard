@@ -107,7 +107,7 @@ public class FileManagerService {
     @Transactional
     public StoredFile rename(UUID userId, UUID fileId, String newName) throws IOException {
         StoredFile stored = storedFileRepository.findById(fileId).orElseThrow();
-        String safeName = safeName(newName);
+        String safeName = safeRename(stored, newName);
         Path current = nasPathService.resolveExistingRequiredInsideRoot(stored.getRelativePath());
         Path target = current.resolveSibling(safeName).normalize();
         if (!target.startsWith(nasPathService.nasRoot())) {
@@ -161,6 +161,43 @@ public class FileManagerService {
             throw new IllegalArgumentException("Invalid file name.");
         }
         return safe;
+    }
+
+    public static String safeRename(StoredFile stored, String requestedName) {
+        String safe = safeName(requestedName);
+        if (stored.isDirectory() || hasExtension(safe)) {
+            return safe;
+        }
+
+        String currentName = stored.getOriginalName();
+        int dot = currentName.lastIndexOf('.');
+        if (dot <= 0 || dot == currentName.length() - 1) {
+            return safe + extensionFromMimeType(stored.getMimeType());
+        }
+        return safe + currentName.substring(dot);
+    }
+
+    private static boolean hasExtension(String name) {
+        int dot = name.lastIndexOf('.');
+        return dot > 0 && dot < name.length() - 1;
+    }
+
+    private static String extensionFromMimeType(String mimeType) {
+        if (mimeType == null) {
+            return "";
+        }
+        return switch (mimeType) {
+            case "image/png" -> ".png";
+            case "image/jpeg" -> ".jpg";
+            case "image/gif" -> ".gif";
+            case "image/webp" -> ".webp";
+            case "image/svg+xml" -> ".svg";
+            case "video/mp4" -> ".mp4";
+            case "text/plain" -> ".txt";
+            case "application/pdf" -> ".pdf";
+            case "application/json" -> ".json";
+            default -> "";
+        };
     }
 
     public record DownloadFile(StoredFile storedFile, Resource resource) {

@@ -159,7 +159,7 @@ function FileManager() {
   }
 
   async function renameFile(file: StoredFile) {
-    const nextName = window.prompt("New file name", file.originalName);
+    const nextName = window.prompt("New file name. If you omit the extension, the current extension is kept.", file.originalName);
     if (!nextName || nextName === file.originalName) return;
     try {
       await api<StoredFile>(`/files/rename/${file.id}`, {
