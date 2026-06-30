@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Download, Eye, FileText, Folder, HardDrive, LogOut, Pencil, Shield, Trash2, Upload, X } from "lucide-react";
+import { Download, Eye, FileText, Folder, FolderPlus, HardDrive, Home, LogOut, Pencil, Search, Shield, Trash2, Upload, X } from "lucide-react";
 import { api, apiBlob, login, setToken, token } from "./lib/api";
 import "./styles.css";
 
@@ -102,11 +102,20 @@ function FileManager() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<PreviewState | null>(null);
+  const [currentPath, setCurrentPath] = useState("/uploads");
+  const [query, setQuery] = useState("");
+  const [searching, setSearching] = useState(false);
 
   async function refresh() {
     try {
       setError("");
-      setFiles(await api<StoredFile[]>("/files?path=/uploads"));
+      if (query.trim()) {
+        setSearching(true);
+        setFiles(await api<StoredFile[]>(`/files/search?query=${encodeURIComponent(query.trim())}`));
+      } else {
+        setSearching(false);
+        setFiles(await api<StoredFile[]>(`/files?path=${encodeURIComponent(currentPath)}`));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load files");
     }
@@ -118,7 +127,7 @@ function FileManager() {
     const data = new FormData();
     data.set("file", file);
     try {
-      await api<StoredFile>("/files/upload", { method: "POST", body: data });
+      await api<StoredFile>(`/files/upload?path=${encodeURIComponent(currentPath)}`, { method: "POST", body: data });
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
@@ -172,6 +181,29 @@ function FileManager() {
     }
   }
 
+  async function createFolder() {
+    const name = window.prompt("Folder name");
+    if (!name) return;
+    try {
+      await api<StoredFile>("/files/folder", {
+        method: "POST",
+        body: JSON.stringify({ parentPath: currentPath, name })
+      });
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Create folder failed");
+    }
+  }
+
+  function openItem(file: StoredFile) {
+    if (file.directory) {
+      setQuery("");
+      setCurrentPath(file.relativePath);
+      return;
+    }
+    previewFile(file);
+  }
+
   async function deleteFile(file: StoredFile) {
     if (!window.confirm(`Move "${file.originalName}" to trash?`)) return;
     try {
@@ -192,16 +224,34 @@ function FileManager() {
   useEffect(() => {
     refresh();
     return () => closePreview();
-  }, []);
+  }, [currentPath]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => refresh(), 250);
+    return () => window.clearTimeout(timer);
+  }, [query]);
+
+  const folders = files.filter((file) => file.directory);
+  const documents = files.filter((file) => !file.directory);
 
   return (
     <section className="workspace">
-      <div className="toolbar">
-        <h2>File Manager</h2>
-        <label className="icon-button">
-          <Upload size={18} />
-          <input type="file" onChange={(event) => event.target.files?.[0] && uploadFile(event.target.files[0])} />
-        </label>
+      <div className="file-manager-header">
+        <div>
+          <h2>File Manager</h2>
+          <Breadcrumb path={currentPath} onChange={(path) => { setQuery(""); setCurrentPath(path); }} />
+        </div>
+        <div className="file-toolbar">
+          <div className="search-box">
+            <Search size={16} />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search files" />
+          </div>
+          <button title="New folder" onClick={createFolder}><FolderPlus size={18} /></button>
+          <label className="icon-button" title="Upload">
+            <Upload size={18} />
+            <input type="file" onChange={(event) => event.target.files?.[0] && uploadFile(event.target.files[0])} />
+          </label>
+        </div>
       </div>
       {error && <p className="error">{error}</p>}
       <div className="drop-zone" onDragOver={(event) => event.preventDefault()} onDrop={(event) => {
@@ -209,36 +259,68 @@ function FileManager() {
         const first = event.dataTransfer.files[0];
         if (first) uploadFile(first);
       }}>
-        {busy ? "Uploading..." : "Drop files here"}
+        {busy ? "Uploading..." : `Drop files into ${currentPath}`}
       </div>
-      <table>
-        <thead><tr><th>Name</th><th>Path</th><th>Size</th><th>Created</th><th>Actions</th></tr></thead>
-        <tbody>
-          {files.length === 0 && (
-            <tr>
-              <td colSpan={5} className="empty-cell">No uploaded files yet.</td>
-            </tr>
-          )}
-          {files.map((file) => (
-            <tr key={file.id}>
-              <td className="file-name">{file.directory ? <Folder size={18} /> : <FileText size={18} />}{file.originalName}</td>
-              <td>{file.relativePath}</td>
-              <td>{file.directory ? "folder" : formatBytes(file.sizeBytes)}</td>
-              <td>{new Date(file.createdAt).toLocaleString()}</td>
-              <td>
-                <div className="row-actions">
-                  <button title="Preview" onClick={() => previewFile(file)} disabled={file.directory}><Eye size={16} /></button>
-                  <button title="Download" onClick={() => downloadFile(file)} disabled={file.directory}><Download size={16} /></button>
-                  <button title="Rename" onClick={() => renameFile(file)}><Pencil size={16} /></button>
-                  <button title="Move to trash" onClick={() => deleteFile(file)}><Trash2 size={16} /></button>
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {files.length === 0 && <div className="empty-drive">{searching ? "No matching files." : "This folder is empty."}</div>}
+      {folders.length > 0 && <FileSection title={searching ? "Matching folders" : "Folders"} files={folders} onOpen={openItem} onPreview={previewFile} onDownload={downloadFile} onRename={renameFile} onDelete={deleteFile} />}
+      {documents.length > 0 && <FileSection title={searching ? "Matching files" : "Files"} files={documents} onOpen={openItem} onPreview={previewFile} onDownload={downloadFile} onRename={renameFile} onDelete={deleteFile} />}
       {preview && <PreviewDialog preview={preview} onClose={closePreview} />}
     </section>
+  );
+}
+
+function Breadcrumb({ path, onChange }: { path: string; onChange: (path: string) => void }) {
+  const parts = path.split("/").filter(Boolean);
+  const crumbs = parts.map((part, index) => ({
+    label: index === 0 ? "Uploads" : part,
+    path: "/" + parts.slice(0, index + 1).join("/")
+  }));
+
+  return (
+    <nav className="breadcrumb">
+      <button title="Uploads" onClick={() => onChange("/uploads")}><Home size={15} /></button>
+      {crumbs.slice(1).map((crumb) => (
+        <React.Fragment key={crumb.path}>
+          <span>/</span>
+          <button onClick={() => onChange(crumb.path)}>{crumb.label}</button>
+        </React.Fragment>
+      ))}
+    </nav>
+  );
+}
+
+function FileSection({ title, files, onOpen, onPreview, onDownload, onRename, onDelete }: {
+  title: string;
+  files: StoredFile[];
+  onOpen: (file: StoredFile) => void;
+  onPreview: (file: StoredFile) => void;
+  onDownload: (file: StoredFile) => void;
+  onRename: (file: StoredFile) => void;
+  onDelete: (file: StoredFile) => void;
+}) {
+  return (
+    <div className="file-section">
+      <h3>{title}</h3>
+      <div className="file-grid">
+        {files.map((file) => (
+          <article className="file-tile" key={file.id} onDoubleClick={() => onOpen(file)}>
+            <button className="file-tile-main" onClick={() => onOpen(file)}>
+              <span className={file.directory ? "file-icon folder-icon" : "file-icon document-icon"}>
+                {file.directory ? <Folder size={34} /> : <FileText size={34} />}
+              </span>
+              <span className="file-tile-name">{file.originalName}</span>
+              <span className="file-tile-meta">{file.directory ? "Folder" : formatBytes(file.sizeBytes)}</span>
+            </button>
+            <div className="tile-actions">
+              <button title="Preview" onClick={() => onPreview(file)} disabled={file.directory}><Eye size={15} /></button>
+              <button title="Download" onClick={() => onDownload(file)} disabled={file.directory}><Download size={15} /></button>
+              <button title="Rename" onClick={() => onRename(file)}><Pencil size={15} /></button>
+              <button title="Move to trash" onClick={() => onDelete(file)}><Trash2 size={15} /></button>
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
   );
 }
 

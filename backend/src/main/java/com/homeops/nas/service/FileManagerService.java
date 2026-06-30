@@ -37,19 +37,33 @@ public class FileManagerService {
     @Transactional(readOnly = true)
     public List<StoredFile> list(String path) {
         String parent = normalizeApiPath(path);
+        ensureUploadsScope(parent);
         return storedFileRepository.findByParentPathAndDeletedFalseOrderByDirectoryDescOriginalNameAsc(parent);
+    }
+
+    @Transactional(readOnly = true)
+    public List<StoredFile> search(String query) {
+        if (query == null || query.isBlank()) {
+            return List.of();
+        }
+        return storedFileRepository.findTop100ByDeletedFalseAndOriginalNameContainingIgnoreCaseOrderByDirectoryDescOriginalNameAsc(query.trim())
+                .stream()
+                .filter(file -> file.getRelativePath().equals("/uploads") || file.getRelativePath().startsWith("/uploads/"))
+                .toList();
     }
 
     @Transactional
     public StoredFile createFolder(UUID userId, String parentPath, String name) throws IOException {
         String safeName = safeName(name);
+        String parentApiPath = normalizeApiPath(parentPath);
+        ensureUploadsScope(parentApiPath);
         Path parent = nasPathService.resolveRequiredInsideRoot(parentPath);
         Files.createDirectories(parent);
-        Path folder = nasPathService.resolveRequiredInsideRoot(normalizeApiPath(parentPath) + "/" + safeName);
+        Path folder = nasPathService.resolveRequiredInsideRoot(parentApiPath + "/" + safeName);
         Files.createDirectory(folder);
         StoredFile saved = storedFileRepository.save(new StoredFile(
                 userId,
-                normalizeApiPath(parentPath),
+                parentApiPath,
                 safeName,
                 safeName,
                 folder.toString(),
@@ -64,11 +78,13 @@ public class FileManagerService {
     }
 
     @Transactional
-    public StoredFile upload(UUID userId, MultipartFile file) throws Exception {
-        Files.createDirectories(nasPathService.resolveRequiredInsideRoot("/uploads"));
+    public StoredFile upload(UUID userId, String parentPath, MultipartFile file) throws Exception {
+        String parentApiPath = normalizeApiPath(parentPath == null || parentPath.isBlank() ? "/uploads" : parentPath);
+        ensureUploadsScope(parentApiPath);
+        Files.createDirectories(nasPathService.resolveRequiredInsideRoot(parentApiPath));
         String original = safeName(file.getOriginalFilename() == null ? "upload.bin" : file.getOriginalFilename());
         String stored = UUID.randomUUID() + "-" + original;
-        Path destination = nasPathService.resolveRequiredInsideRoot("/uploads/" + stored);
+        Path destination = nasPathService.resolveRequiredInsideRoot(parentApiPath + "/" + stored);
 
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         long size;
@@ -79,7 +95,7 @@ public class FileManagerService {
         String sha256 = HexFormat.of().formatHex(digest.digest());
         StoredFile saved = storedFileRepository.save(new StoredFile(
                 userId,
-                "/uploads",
+                parentApiPath,
                 original,
                 stored,
                 destination.toString(),
@@ -161,6 +177,12 @@ public class FileManagerService {
             throw new IllegalArgumentException("Invalid file name.");
         }
         return safe;
+    }
+
+    private static void ensureUploadsScope(String apiPath) {
+        if (!apiPath.equals("/uploads") && !apiPath.startsWith("/uploads/")) {
+            throw new IllegalArgumentException("File manager access is limited to /uploads.");
+        }
     }
 
     public static String safeRename(StoredFile stored, String requestedName) {

@@ -25,14 +25,21 @@ public class FileController {
         return fileManagerService.list(path);
     }
 
+    @GetMapping("/search")
+    public List<StoredFile> search(@RequestParam String query) {
+        return fileManagerService.search(query);
+    }
+
     @PostMapping("/folder")
     public StoredFile folder(@Valid @RequestBody CreateFolderRequest body, Authentication authentication) throws Exception {
         return fileManagerService.createFolder(userId(authentication), body.parentPath(), body.name());
     }
 
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public StoredFile upload(@RequestPart("file") MultipartFile file, Authentication authentication) throws Exception {
-        return fileManagerService.upload(userId(authentication), file);
+    public StoredFile upload(@RequestParam(defaultValue = "/uploads") String path,
+                             @RequestPart("file") MultipartFile file,
+                             Authentication authentication) throws Exception {
+        return fileManagerService.upload(userId(authentication), path, file);
     }
 
     @GetMapping("/download/{fileId}")

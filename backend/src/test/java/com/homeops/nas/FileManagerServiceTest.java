@@ -61,4 +61,9 @@ class FileManagerServiceTest {
 
         assertThat(FileManagerService.safeRename(stored, "renamed")).isEqualTo("renamed.png");
     }
+
+    @Test
+    void normalizeApiPathKeepsLeadingSlashAndRemovesTrailingSlash() {
+        assertThat(FileManagerService.normalizeApiPath("uploads/photos/")).isEqualTo("/uploads/photos");
+    }
 }
