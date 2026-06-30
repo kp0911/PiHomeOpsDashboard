@@ -322,10 +322,19 @@ th {
   background: #ffffff;
   overflow: hidden;
   cursor: grab;
+  transition: border-color 120ms ease, background 120ms ease, box-shadow 120ms ease, opacity 120ms ease, transform 120ms ease;
+  user-select: none;
+  touch-action: none;
 }
 
 .file-tile:active {
   cursor: grabbing;
+}
+
+.file-tile.is-dragging {
+  opacity: 0.38;
+  transform: scale(0.98);
+  box-shadow: none;
 }
 
 .folder-drop-target {
@@ -339,10 +348,49 @@ th {
 .folder-drop-target.drag-over {
   outline: 2px solid #b48725;
   background: #fff8e8;
+  border-color: #c9962d;
+  box-shadow: 0 0 0 4px rgba(211, 177, 95, 0.26);
 }
 
 .folder-drop-target.drag-over .file-tile-main {
   background: #fff8e8;
+}
+
+.folder-drop-target.drag-over .folder-icon {
+  color: #744f12;
+  background: #ffe39b;
+}
+
+.drag-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1000;
+  max-width: 240px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #c9962d;
+  border-radius: 8px;
+  background: rgba(255, 248, 232, 0.94);
+  box-shadow: 0 12px 28px rgba(31, 42, 39, 0.18);
+  color: #1d2428;
+  font-weight: 650;
+  pointer-events: none;
+}
+
+.drag-ghost .file-icon {
+  width: 42px;
+  height: 42px;
+}
+
+.drag-ghost span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .file-tile-main {

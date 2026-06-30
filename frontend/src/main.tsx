@@ -141,8 +141,9 @@ function FileManager() {
   const [draggedFileId, setDraggedFileId] = useState<string | null>(null);
   const [hoveredFolder, setHoveredFolder] = useState<{ id: string; path: string } | null>(null);
   const [pointerDraggingFileId, setPointerDraggingFileId] = useState<string | null>(null);
+  const [dragGhost, setDragGhost] = useState<{ name: string; directory: boolean; x: number; y: number } | null>(null);
   const dropHandledRef = useRef(false);
-  const pointerDragRef = useRef<{ fileId: string; startX: number; startY: number; active: boolean } | null>(null);
+  const pointerDragRef = useRef<{ fileId: string; name: string; directory: boolean; startX: number; startY: number; active: boolean } | null>(null);
   const suppressOpenRef = useRef(false);
   const moveFileRef = useRef(moveFile);
 
@@ -297,11 +298,13 @@ function FileManager() {
     }
   }
 
-  function beginPointerDrag(fileId: string, event: React.PointerEvent) {
+  function beginPointerDrag(file: StoredFile, event: React.PointerEvent) {
     if (event.button !== 0) return;
     if (event.target instanceof HTMLElement && event.target.closest(".tile-actions")) return;
     pointerDragRef.current = {
-      fileId,
+      fileId: file.id,
+      name: file.originalName,
+      directory: file.directory,
       startX: event.clientX,
       startY: event.clientY,
       active: false
@@ -341,7 +344,9 @@ function FileManager() {
         dropHandledRef.current = false;
         setDraggedFileId(drag.fileId);
         setPointerDraggingFileId(drag.fileId);
+        setDragGhost({ name: drag.name, directory: drag.directory, x: event.clientX, y: event.clientY });
       }
+      setDragGhost((current) => current ? { ...current, x: event.clientX, y: event.clientY } : current);
       const target = folderTargetFromPoint(event.clientX, event.clientY);
       setHoveredFolder(target && target.id !== drag.fileId ? target : null);
     }
@@ -354,6 +359,7 @@ function FileManager() {
       setDraggedFileId(null);
       setPointerDraggingFileId(null);
       setHoveredFolder(null);
+      setDragGhost(null);
       if (drag.active) {
         suppressOpenRef.current = true;
         window.setTimeout(() => {
@@ -409,6 +415,17 @@ function FileManager() {
       {files.length === 0 && <div className="empty-drive">{searching ? "No matching files." : "This folder is empty."}</div>}
       {folders.length > 0 && <FileSection title={searching ? "Matching folders" : "Folders"} files={folders} draggedFileId={draggedFileId} hoveredFolderId={hoveredFolder?.id ?? null} pointerDraggingFileId={pointerDraggingFileId} onPointerDragStart={beginPointerDrag} onDragStart={startInternalDrag} onDragEnd={finishInternalDrag} onHoverFolder={setHoveredFolder} onOpen={openFromTile} onPreview={previewFile} onDownload={downloadFile} onRename={renameFile} onDelete={deleteFile} onDropIntoFolder={uploadFile} onMoveIntoFolder={moveFileFromDrop} />}
       {documents.length > 0 && <FileSection title={searching ? "Matching files" : "Files"} files={documents} draggedFileId={draggedFileId} hoveredFolderId={hoveredFolder?.id ?? null} pointerDraggingFileId={pointerDraggingFileId} onPointerDragStart={beginPointerDrag} onDragStart={startInternalDrag} onDragEnd={finishInternalDrag} onHoverFolder={setHoveredFolder} onOpen={openFromTile} onPreview={previewFile} onDownload={downloadFile} onRename={renameFile} onDelete={deleteFile} onDropIntoFolder={uploadFile} onMoveIntoFolder={moveFileFromDrop} />}
+      {dragGhost && (
+        <div
+          className="drag-ghost"
+          style={{ transform: `translate3d(${dragGhost.x + 12}px, ${dragGhost.y + 12}px, 0)` }}
+        >
+          <span className={dragGhost.directory ? "file-icon folder-icon" : "file-icon document-icon"}>
+            {dragGhost.directory ? <Folder size={26} /> : <FileText size={26} />}
+          </span>
+          <span>{dragGhost.name}</span>
+        </div>
+      )}
       {preview && <PreviewDialog preview={preview} onClose={closePreview} />}
     </section>
   );
@@ -440,7 +457,7 @@ function FileSection({ title, files, draggedFileId, hoveredFolderId, pointerDrag
   draggedFileId: string | null;
   hoveredFolderId: string | null;
   pointerDraggingFileId: string | null;
-  onPointerDragStart: (fileId: string, event: React.PointerEvent) => void;
+  onPointerDragStart: (file: StoredFile, event: React.PointerEvent) => void;
   onDragStart: (fileId: string) => void;
   onDragEnd: (fileId: string, releaseTarget?: { id: string; path: string } | null) => void;
   onHoverFolder: (folder: { id: string; path: string } | null) => void;
@@ -527,7 +544,7 @@ function FileSection({ title, files, draggedFileId, hoveredFolderId, pointerDrag
             data-file-id={file.id}
             data-folder-id={file.directory ? file.id : undefined}
             data-folder-path={file.directory ? file.relativePath : undefined}
-            onPointerDown={(event) => onPointerDragStart(file.id, event)}
+            onPointerDown={(event) => onPointerDragStart(file, event)}
             onDoubleClick={() => onOpen(file)}
             onDragStart={(event) => {
               onDragStart(file.id);
